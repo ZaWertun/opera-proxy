@@ -228,6 +228,7 @@ func run() int {
 	}
 
 	ctx, cl = context.WithTimeout(context.Background(), args.timeout)
+	defer cl()
 	// TODO: learn about requested_geo value format
 	ips, err := seclient.Discover(ctx, fmt.Sprintf("\"%s\",,", args.country))
 	if err != nil {
