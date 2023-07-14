@@ -296,7 +296,8 @@ func run() int {
 	server := http.Server{Handler: handler}
 	if args.idleTimeout > 0 {
 		var lastActive time.Time
-		runTicker(context.Background(), args.idleTimeout, args.idleTimeout, func(ctx context.Context) error {
+		var checkTimeout = 1 * time.Second
+		runTicker(context.Background(), checkTimeout, checkTimeout, func(ctx context.Context) error {
 			conns := atomic.LoadInt32(&handler.connections)
 			if conns == 0 {
 				now := time.Now()
