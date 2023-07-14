@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +24,9 @@ import (
 )
 
 const (
-	API_DOMAIN   = "api.sec-tunnel.com"
-	PROXY_SUFFIX = "sec-tunnel.com"
+	API_DOMAIN          = "api.sec-tunnel.com"
+	PROXY_SUFFIX        = "sec-tunnel.com"
+	SD_LISTEN_FDS_START = 3
 )
 
 var (
@@ -285,7 +287,35 @@ func run() int {
 	mainLogger.Info("Starting proxy server...")
 	handler := NewProxyHandler(handlerDialer, proxyLogger)
 	mainLogger.Info("Init complete.")
-	err = http.ListenAndServe(args.bindAddress, handler)
+	var listenPid = os.Getenv("LISTEN_PID")
+	var listenFds = os.Getenv("LISTEN_FDS")
+	var listenFdNames = os.Getenv("LISTEN_FDNAMES")
+	if len(listenPid) > 0 && len(listenFds) > 0 {
+		mainLogger.Info("Trying to use socket passed from systemd")
+		listenFdsInt, err := strconv.Atoi(listenFds)
+		if err != nil {
+			mainLogger.Error("Can't parse integer from LISTEN_FDS env (%v)", listenFds)
+			return 16
+		}
+		if listenFdsInt > 1 {
+			mainLogger.Error("One file descriptor expected. %v received (%v)", listenFdsInt, listenFdNames)
+			return 16
+		}
+		fd := os.NewFile(SD_LISTEN_FDS_START, "systemd fd")
+		if fd == nil {
+			mainLogger.Error("Invalid file descriptor")
+			return 16
+		}
+		sock, err := net.FileListener(fd)
+		if err != nil {
+			mainLogger.Error("Can't listen on fd: %v", err)
+			return 16
+		}
+		srv := http.Server{Handler: handler}
+		err = srv.Serve(sock)
+	} else {
+		err = http.ListenAndServe(args.bindAddress, handler)
+	}
 	mainLogger.Critical("Server terminated with a reason: %v", err)
 	mainLogger.Info("Shutting down...")
 	return 0
