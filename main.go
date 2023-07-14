@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	xproxy "golang.org/x/net/proxy"
@@ -52,6 +53,7 @@ type CLIArgs struct {
 	bindAddress         string
 	verbosity           int
 	timeout             time.Duration
+	idleTimeout         time.Duration
 	showVersion         bool
 	proxy               string
 	apiLogin            string
@@ -73,6 +75,8 @@ func parse_args() CLIArgs {
 	flag.IntVar(&args.verbosity, "verbosity", 20, "logging verbosity "+
 		"(10 - debug, 20 - info, 30 - warning, 40 - error, 50 - critical)")
 	flag.DurationVar(&args.timeout, "timeout", 10*time.Second, "timeout for network operations")
+	flag.DurationVar(&args.idleTimeout, "idle-timeout", 0,
+		"server will exit if no active connections will remain till timeout is over")
 	flag.BoolVar(&args.showVersion, "version", false, "show program version and exit")
 	flag.StringVar(&args.proxy, "proxy", "", "sets base proxy to use for all dial-outs. "+
 		"Format: <http|https|socks5|socks5h>://[login:password@]host[:port] "+
@@ -287,6 +291,28 @@ func run() int {
 	mainLogger.Info("Starting proxy server...")
 	handler := NewProxyHandler(handlerDialer, proxyLogger)
 	mainLogger.Info("Init complete.")
+
+	server := http.Server{Handler: handler}
+	if args.idleTimeout > 0 {
+		var lastActive time.Time
+		runTicker(context.Background(), args.idleTimeout, args.idleTimeout, func(ctx context.Context) error {
+			conns := atomic.LoadInt32(&handler.connections)
+			if conns == 0 {
+				now := time.Now()
+				if lastActive.Add(args.idleTimeout).Before(now) {
+					mainLogger.Info("Idle timeout elapsed, exiting")
+					server.Shutdown(ctx)
+				}
+			} else if conns > 0 {
+				lastActive = time.Now()
+			} else {
+				atomic.CompareAndSwapInt32(&handler.connections, conns, 0)
+			}
+			return nil
+		})
+	}
+
+	var sock net.Listener
 	var listenPid = os.Getenv("LISTEN_PID")
 	var listenFds = os.Getenv("LISTEN_FDS")
 	var listenFdNames = os.Getenv("LISTEN_FDNAMES")
@@ -306,19 +332,27 @@ func run() int {
 			mainLogger.Error("Invalid file descriptor")
 			return 16
 		}
-		sock, err := net.FileListener(fd)
+		sock, err = net.FileListener(fd)
 		if err != nil {
 			mainLogger.Error("Can't listen on fd: %v", err)
 			return 16
 		}
-		srv := http.Server{Handler: handler}
-		err = srv.Serve(sock)
 	} else {
-		err = http.ListenAndServe(args.bindAddress, handler)
+		sock, err = net.Listen("tcp", args.bindAddress)
+		if err != nil {
+			mainLogger.Error("Can't listen on socket: %v", err)
+			return 17
+		}
 	}
-	mainLogger.Critical("Server terminated with a reason: %v", err)
+
+	err = server.Serve(sock)
+	code := 0
+	if err != http.ErrServerClosed {
+		code = 1
+		mainLogger.Info("Server terminated with a reason: %v", err)
+	}
 	mainLogger.Info("Shutting down...")
-	return 0
+	return code
 }
 
 func printCountries(logger *CondLogger, timeout time.Duration, seclient *se.SEClient) int {

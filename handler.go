@@ -14,6 +14,7 @@ type AuthProvider func() string
 type ProxyHandler struct {
 	logger        *CondLogger
 	dialer        ContextDialer
+	connections   int32
 	httptransport http.RoundTripper
 }
 
@@ -28,6 +29,7 @@ func NewProxyHandler(dialer ContextDialer, logger *CondLogger) *ProxyHandler {
 	return &ProxyHandler{
 		logger:        logger,
 		dialer:        dialer,
+		connections:   0,
 		httptransport: httptransport,
 	}
 }
@@ -53,13 +55,12 @@ func (s *ProxyHandler) HandleTunnel(wr http.ResponseWriter, req *http.Request) {
 
 		// Inform client connection is built
 		fmt.Fprintf(localconn, "HTTP/%d.%d 200 OK\r\n\r\n", req.ProtoMajor, req.ProtoMinor)
-
-		proxy(req.Context(), localconn, conn)
+		proxy(req.Context(), localconn, conn, &s.connections)
 	} else if req.ProtoMajor == 2 {
 		wr.Header()["Date"] = nil
 		wr.WriteHeader(http.StatusOK)
 		flush(wr)
-		proxyh2(req.Context(), req.Body, wr, conn)
+		proxyh2(req.Context(), req.Body, wr, conn, &s.connections)
 	} else {
 		s.logger.Error("Unsupported protocol version: %s", req.Proto)
 		http.Error(wr, "Unsupported protocol version.", http.StatusBadRequest)

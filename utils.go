@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,7 +23,8 @@ func basic_auth_header(login, password string) string {
 		[]byte(login+":"+password))
 }
 
-func proxy(ctx context.Context, left, right net.Conn) {
+func proxy(ctx context.Context, left, right net.Conn, conns *int32) {
+	atomic.AddInt32(conns, 1)
 	wg := sync.WaitGroup{}
 	cpy := func(dst, src net.Conn) {
 		defer wg.Done()
@@ -36,6 +38,7 @@ func proxy(ctx context.Context, left, right net.Conn) {
 	go func() {
 		wg.Wait()
 		groupdone <- struct{}{}
+		atomic.AddInt32(conns, -1)
 	}()
 	select {
 	case <-ctx.Done():
@@ -48,7 +51,8 @@ func proxy(ctx context.Context, left, right net.Conn) {
 	return
 }
 
-func proxyh2(ctx context.Context, leftreader io.ReadCloser, leftwriter io.Writer, right net.Conn) {
+func proxyh2(ctx context.Context, leftreader io.ReadCloser, leftwriter io.Writer, right net.Conn, conns *int32) {
+	atomic.AddInt32(conns, 1)
 	wg := sync.WaitGroup{}
 	ltr := func(dst net.Conn, src io.Reader) {
 		defer wg.Done()
@@ -66,6 +70,7 @@ func proxyh2(ctx context.Context, leftreader io.ReadCloser, leftwriter io.Writer
 	go func() {
 		wg.Wait()
 		groupdone <- struct{}{}
+		atomic.AddInt32(conns, -1)
 	}()
 	select {
 	case <-ctx.Done():
