@@ -1,0 +1,10 @@
+[Unit]
+Description=Opera Proxy
+
+[Service]
+ExecStart=%h/bin/opera-proxy.linux-amd64 -idle-timeout 5m
+Restart=on-failure
+RestartSec=1s
+
+[Install]
+WantedBy=default.target
