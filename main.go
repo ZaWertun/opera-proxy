@@ -299,7 +299,7 @@ func run() int {
 		var checkTimeout = 1 * time.Second
 		runTicker(context.Background(), checkTimeout, checkTimeout, func(ctx context.Context) error {
 			conns := atomic.LoadInt32(&handler.connections)
-			if conns == 0 {
+			if conns == 0 && !lastActive.IsZero() {
 				now := time.Now()
 				if lastActive.Add(args.idleTimeout).Before(now) {
 					mainLogger.Info("Idle timeout elapsed, exiting")
